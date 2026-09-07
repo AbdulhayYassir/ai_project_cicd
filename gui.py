@@ -1,42 +1,71 @@
-import joblib
 import numpy as np
+import requests
 import streamlit as st
 
-st.set_page_config(page_title="Linear Regression Predictor", page_icon="📈")
+st.set_page_config(page_title="Housing Price Predictor", page_icon="🏠")
 
-# تحميل الموديل مرة واحدة وتخزينه في الكاش
-@st.cache_resource
-def load_model():
-    return joblib.load("model.pkl")
+API_URL = "http://api:5000/predict"
 
-model = load_model()
-n_features = getattr(model, "n_features_in_", 12)
+st.title("🏠 توقع سعر الشقة/البيت")
+st.caption(
+    "ترتيب الفيتشرز تحت لازم يبقى **نفس ترتيب التدريب بالظبط**. "
+    "لو مش متأكد من الترتيب، ارجع لكود التدريب وأكد عليه."
+)
 
-st.title("📈 Linear Regression - واجهة التنبؤ")
-st.write(f"الموديل ده مدرّب على **{n_features}** فيتشر. دخّل القيم تحت واضغط تنبؤ.")
+col1, col2 = st.columns(2)
 
-# نعمل input لكل فيتشر
-cols = st.columns(3)
-values = []
-for i in range(n_features):
-    col = cols[i % 3]
-    val = col.number_input(f"Feature {i + 1}", value=0.0, format="%.4f")
-    values.append(val)
+with col1:
+    bedrooms = st.number_input("عدد الأوض (bedrooms)", min_value=0, value=3, step=1)
+    bathrooms = st.number_input("عدد الحمامات (bathrooms)", min_value=0, value=1, step=1)
+    stories = st.number_input("عدد الأدوار (stories)", min_value=0, value=1, step=1)
+    parking = st.number_input("عدد أماكن الباركينج (parking)", min_value=0, value=0, step=1)
+    area = st.number_input("المساحة (area) بالمتر/القدم", min_value=1.0, value=3000.0)
 
-if st.button("تنبأ", type="primary"):
-    X = np.array(values).reshape(1, -1)
-    prediction = model.predict(X)[0]
-    st.success(f"القيمة المتوقعة: **{prediction:.4f}**")
+with col2:
+    mainroad = st.selectbox("على شارع رئيسي؟ (mainroad)", ["yes", "no"])
+    guestroom = st.selectbox("فيه غرفة ضيوف؟ (guestroom)", ["yes", "no"])
+    basement = st.selectbox("فيه بدروم؟ (basement)", ["yes", "no"])
+    hotwaterheating = st.selectbox("سخان مياه مركزي؟ (hotwaterheating)", ["yes", "no"])
+    airconditioning = st.selectbox("تكييف؟ (airconditioning)", ["yes", "no"])
+    prefarea = st.selectbox("في منطقة مميزة؟ (prefarea)", ["yes", "no"])
+    furnishingstatus = st.selectbox(
+        "حالة الفرش (furnishingstatus)",
+        ["furnished", "semi-furnished", "unfurnished"],
+    )
 
-with st.expander("أو ارفع القيم كـ CSV/JSON"):
-    raw = st.text_area("اكتب الفيتشرز مفصولة بفاصلة (comma)، بنفس الترتيب", "")
-    if st.button("تنبأ من النص"):
-        try:
-            nums = [float(x.strip()) for x in raw.split(",") if x.strip() != ""]
-            if len(nums) != n_features:
-                st.error(f"لازم بالظبط {n_features} قيمة، انت بعت {len(nums)}")
-            else:
-                pred = model.predict(np.array(nums).reshape(1, -1))[0]
-                st.success(f"القيمة المتوقعة: **{pred:.4f}**")
-        except ValueError:
-            st.error("تأكد إن كل القيم أرقام صحيحة")
+yes_no = {"yes": 1, "no": 0}
+furnishing_map = {"furnished": 2, "semi-furnished": 1, "unfurnished": 0}
+
+if st.button("احسب السعر المتوقع", type="primary"):
+    area_log = np.log(area)
+
+    features = [
+        bedrooms,
+        bathrooms,
+        stories,
+        yes_no[mainroad],
+        yes_no[guestroom],
+        yes_no[basement],
+        yes_no[hotwaterheating],
+        yes_no[airconditioning],
+        parking,
+        yes_no[prefarea],
+        furnishing_map[furnishingstatus],
+        area_log,
+    ]
+
+    try:
+        response = requests.post(API_URL, json={"features": features}, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+
+        if "predictions" in result:
+            price_log_pred = result["predictions"][0]
+            price_pred = np.exp(price_log_pred)
+            st.success(f"السعر المتوقع تقريبًا: **{price_pred:,.0f}**")
+            st.caption(f"(price_log المتوقع = {price_log_pred:.4f})")
+        else:
+            st.error(f"رد غير متوقع من الـ API: {result}")
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"مقدرتش أوصل للـ API: {e}")
